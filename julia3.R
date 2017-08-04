@@ -292,7 +292,7 @@ ggplot(EVERYTHING) +
 EVERYTHING %>%
   filter(certYear <= 2012 && certYear >= 2008 | is.na(certYear)) %>%
 ggplot() +
-  aes(x = Reg_Year, y = Sales, color = ethnicity) +
+  aes(x = Reg_Year, y = Emp, color = ethnicity) +
   stat_summary(fun.y = mean, geom = "line", size = 1) +
   facet_wrap(~ certYear) +
   geom_vline(aes(xintercept = certYear), linetype = "dashed") +
@@ -383,12 +383,11 @@ ggplot(temp2) +
   geom_boxplot()
 
 ggplot(temp2) +
-  aes(fit, fill = factor(MWBEStatus,labels = c("MWBE","Not MWBE"))) +
+  aes(fit, fill = factor(MWBEStatus,labels = c("Not MWBE","MWBE"))) +
   geom_density(alpha = .5, bw =.05) +
   labs(x = "propensity score", y = "density", fill = "") +
   theme(legend.position = "bottom")
 
-  
 draws <- as_tibble(as.matrix(mixed)[,-1])
 test <- tibble(Emp = apply(draws[,1:3], 1, sd),
                Sales = apply(draws[,4:5], 1, sd),
@@ -396,7 +395,8 @@ test <- tibble(Emp = apply(draws[,1:3], 1, sd),
                Type = apply(draws[,9:37], 1, sd),
                Reg_Year = apply(draws[,38:43], 1, sd),
                NAICS2 = apply(draws[,44:89], 1, sd),
-               Wealth = apply(draws[,90:103], 1, sd))
+               Wealth = apply(draws[,90:103], 1, sd),
+               Error = apply(predictive_error(mixed, draws = 400),1,sd))
 
 tibble(lower = apply(test,2,mean) - apply(test,2,sd),
        lower2 = apply(test,2,mean) - 2*apply(test,2,sd),
@@ -408,12 +408,14 @@ tibble(lower = apply(test,2,mean) - apply(test,2,sd),
   geom_linerange(aes(x = names, ymin = lower, ymax = upper), size = 2) +
   geom_linerange(aes(x = names, ymin = lower2, ymax = upper2)) +
   coord_flip()
-
+ggsave("imgs/anova.png")
 mixed
 
 #------------------------#
 #     5. CAUSAL COMP     #
 #------------------------#
+
+#NOTE: FIGURE OUT HOW TO ACCOUNT FOR NAs
 
 temp3 <- temp2 %>% left_join(temp)
 temp3_mwbe <- temp3 %>% filter(MWBEStatus == TRUE)
@@ -426,7 +428,7 @@ for(row in 1:nrow(temp3_mwbe)) {
 
 temp3_matches <- temp3_nmwbe[temp3_mwbe$match,]
 
-#DID Sales (incr 1 mil)
+#DID Sales
 mean(temp3_mwbe$TYLSales - temp3_matches$TYLSales, na.rm = TRUE) -
   mean(temp3_mwbe$Sales - temp3_matches$Sales, na.rm = TRUE)
 
@@ -465,12 +467,9 @@ mean(temp3_mwbe$TYLEmp - temp3_matches$TYLEmp, na.rm = TRUE) -
 #------------------------#
 #     6. Non Gov Con     #
 #------------------------#
-
-####RUN THIS OVERNIGHT####
-mixed2 <- stan_glmer(MWBEStatus ~ EmpF + SalesF + RiskF + Reg_Year +
+mixed_no_type <- stan_glmer(MWBEStatus ~ EmpF + SalesF + RiskF + Reg_Year +
                       (1 | NAICS2) + (1 | WealthF), 
                     temp, family = binomial(link = "logit"), iter = 200)
-
 
 REST <- RATING %>% anti_join(EVERYTHING, c("DunsNumber" = "DUNS_NO"))
 REST <- REST %>% 
@@ -486,19 +485,35 @@ REST <- REST %>%
 REST <- REST %>% 
   left_join(Sales_2Years_Later, by = c("DunsNumber" = "DunsNumber", "Year" = "Year"))
 
-tamp <- REST
-tamp$id <- 1:nrow(tamp)
-tamp$EmpF <- cut(tamp$Emp, c(0,10,100,500,Inf))
-tamp$SalesF <- cut(log(tamp$Sales+1, base = 10), c(0,6,8,10))
-tamp$WealthF <- factor(tamp$Wealth)
-tamp$RiskF <- factor(tamp$Risk)
-tamp$Reg_Year <- factor(tamp$Year)
-nd <- na.omit(tamp)
-nd$MWBEStatus <- -1
-test <- posterior_predict(object = mixed2, newdata = nd, draws = 400)
-nd_fit <- apply(test,1,mean)
+nongov <- REST
+nongov$id <- 1:nrow(nongov)
+nongov$EmpF <- cut(nongov$Emp, c(0,10,100,500,Inf))
+nongov$SalesF <- cut(log(nongov$Sales+1, base = 10), c(0,6,8,10))
+nongov$WealthF <- factor(nongov$Wealth)
+nongov$RiskF <- factor(nongov$Risk)
+nongov$Reg_Year <- factor(nongov$Year)
+nongov <- na.omit(nongov)
+nongov$MWBEStatus <- -1
 
-qplot(nd_fit)
+nongov <- nongov %>% 
+  ungroup() %>%
+  mutate(fit = apply(posterior_predict(mixed_no_type, newdata = nongov),2,mean))
+
+temp3_mwbe <- temp3_mwbe %>% mutate(matchnongov = -1)
+for(row in 1:nrow(temp3_mwbe)) {
+  temp3_mwbe$matchnongov[row] <- which.min((nongov$fit - temp3_mwbe$fit[row])^2)
+}
+
+nongov_matches <- nongov[temp3_mwbe$matchnongov,]
+
+#DID Sales
+mean(temp3_mwbe$TYLSales - nongov_matches$TYLSales, na.rm = TRUE) -
+  mean(temp3_mwbe$Sales - nongov_matches$Sales, na.rm = TRUE)
+
+mean(temp3_mwbe$TYLRisk - nongov_matches$TYLRisk, na.rm = TRUE) -
+  mean(temp3_mwbe$Risk - nongov_matches$Risk, na.rm = TRUE)
+
+#Issue with na.omit is that these are just the people who stayed in business the whole time
 
 ##Notes:
 
