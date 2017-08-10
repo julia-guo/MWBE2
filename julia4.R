@@ -222,16 +222,17 @@ plot_type <-
   filter(count > 400) %>%
   transmute(Type)
 
-EVERYTHING %>% filter(Type %in% plot_type$Type) %>% 
+EVERYTHING %>% filter(Type %in% plot_type$Type) %>%
+  group_by(Type) %>%
+  summarise(prob = mean(as.numeric(MWBEStatus), na.rm = TRUE)) %>%
   ggplot() +
-  aes(x = log(Contract_Value, base = 10), y = as.numeric(MWBEStatus), color = Type) +
-  geom_smooth(method ="glm", method.args = list(family = "binomial"), se = TRUE) +
-  labs(color = "Job Category", 
-       x = "Contract Value (log 10 scale)", 
-       y = "Probability of MWBE Status", 
-       title = "Comparing MWBE Percentages", 
-       subtitle ="at low and high value contracts and across job categories") +
-  coord_cartesian(ylim = c(0, 1.00)) 
+  aes(x = fct_reorder(Type, prob), y = prob, fill = fct_reorder(Type, prob)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  theme_bw() +
+  labs(x = "Job Category", 
+       y = "Percent MWBE", 
+       title = "Comparing MWBE Percentages Across Job Categories") +
+  coord_flip()
 
 #Compare MWBE distributions by contract obtaining methods
 plot_method <-
@@ -241,12 +242,17 @@ plot_method <-
   filter(count > 2800) %>%
   transmute(Method)
 
-EVERYTHING %>% filter(Method %in% plot_method$Method) %>% 
+EVERYTHING %>% filter(Method %in% plot_method$Method) %>%
+  group_by(Method) %>%
+  summarise(prob = mean(as.numeric(MWBEStatus), na.rm = TRUE)) %>%
   ggplot() +
-  aes(log(Contract_Value, base = 10), as.numeric(MWBEStatus), color = Method) +
-  geom_smooth(method ="glm", method.args = list(family = "binomial"), se = TRUE) +
-  labs(color = "Contract Procurement Method", x = "Contract Value (log 10 scale)", y = "Probability of MWBE Status", title = "Comparing MWBE Percentages", subtitle ="at low and high value contracts and across job procurement methods") +
-  coord_cartesian(ylim = c(0, 1.00)) 
+  aes(x = fct_reorder(Method, prob), y = prob, fill = fct_reorder(Method, prob)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  theme_bw() +
+  labs(x = "Contract Procurement Method", 
+       y = "Percent MWBE", 
+       title = "Comparing MWBE Percentages Across Contract Procurement Methods") +
+  coord_flip()
 
 #Compare MWBE distributions by contracting dept
 plot_dept <-
@@ -255,49 +261,79 @@ plot_dept <-
   summarise(count = n()) %>%
   filter(count > 1200) %>%
   transmute(DEPT_SH_NM)
-plots <- list()
-start <- 1
-end <- 5
-for(i in 1:(length(plot_dept$DEPT_SH_NM) %/% 5)){
-  plots[[i]] <-
-    EVERYTHING %>% filter(DEPT_SH_NM %in% plot_dept$DEPT_SH_NM[start:end]) %>%
-    ggplot() +
-    aes(x = log(Contract_Value, base = 10), y = as.numeric(MWBEStatus),
-        color = DEPT_SH_NM) +
-    geom_smooth(method ="glm", method.args = list(family = "binomial"), se = TRUE) +
-    labs(y = "MWBE Probability", color = "Department", x = "Contract Value (log 10 scale)")
-  start = start + 5
-  end = end + 5
-}
 
-grid.arrange(plots[[1]], plots[[2]], plots [[3]], plots[[4]], top = "Comparing MWBE Percentages")
+HS <- c("ADM CHILD SV", "DOYACD", "DP FOR AGING", "DSS", "EDUCATION", "HLTH & MNTL")
+
+Unif <- c("CORRECTION", "FIRE DEPT", "POLICE DEPT.", "DEPT SANIT")
+
+Cap <- c("D.O.T.", "DESIGN & CON", "ENV PROTECT", "PARKS & RECR")
+
+EVERYTHING %>% filter(DEPT_SH_NM %in% plot_dept$DEPT_SH_NM) %>%
+  group_by(DEPT_SH_NM) %>%
+  summarise(prob = mean(as.numeric(MWBEStatus), na.rm = TRUE)) %>%
+  mutate(group = as.factor(ifelse(DEPT_SH_NM %in% HS, "Human Services", 
+                        ifelse(DEPT_SH_NM %in% Unif, "Uniform", 
+                               ifelse(DEPT_SH_NM %in% Cap, "Capital", 
+                                      "Miscellaneous")))),
+         group = factor(group, levels = c("Human Services", "Uniform", "Capital", "Miscellaneous"))) %>%
+  ggplot() +
+  theme_bw() +
+  aes(x = fct_reorder(DEPT_SH_NM, prob), y = prob, 
+      fill = prob) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ group, scales = "free_y") +
+  labs(fill = "",
+       x = "NYC Department", 
+       y = "Percent MWBE", 
+       title = "Comparing MWBE Percentages Across NYC Departments") +
+  coord_flip()
 
 #MWBE vs NAICS
-ggplot(EVERYTHING) +
-  geom_histogram(aes(x = NAICS2, fill = factor(MWBEStatus)), stat = "count") +
-  labs(title = "MWBE distribution across different industries",
+EVERYTHING %>%
+  group_by(NAICS2) %>%
+  summarise(prop = mean(as.numeric(MWBEStatus), na.rm = TRUE)) %>%
+ggplot() +
+  aes(x = NAICS2, y = prop, fill = prop) +
+  geom_bar(stat = "identity") +
+  labs(title = "MWBE Percentages Across Different Industries",
        x = "Industry NAICS code",
-       fill = "MWBE Status")
+       y = "Percentage",
+       fill = "")
 
-#Contract value across NAICS
+EVERYTHING %>%
+  filter(!is.na(ethnicity)) %>%
+  group_by(NAICS2, ethnicity) %>%
+  summarise(a = n()) %>%
+  left_join(EVERYTHING %>%  
+              group_by(NAICS2) %>%
+              summarise(b = n()), by = "NAICS2") %>%
+ggplot() +
+  aes(x = NAICS2, y = a/b, fill = ethnicity) +
+  geom_bar(stat = "identity") +
+  labs(title = "A Closer Look at MWBEs Across Industries",
+       x = "Industry NAICS code",
+       y = "Percentage",
+       fill = "Ethnicity")
+
+#Sales across NAICS
 ggplot(EVERYTHING) +
-  geom_smooth(aes(x = as.numeric(NAICS2), y = log10(Contract_Value), color = factor(MWBEStatus))) +
-  labs(title = "Contract value across industries",
+  aes(x = as.numeric(NAICS2), y = log10(Sales), color = MWBEStatus) +
+  stat_summary(fun.y = "mean", geom = "line") +
+  theme_bw() +
+  labs(title = "Sales Across Industries",
        x = "Industry NAICS code",
        color = "MWBE Status",
-       y = "Contract Value (log 10 scale)")
+       y = "Sales (log 10 scale)")
 
 #cohort graphs (sub in different y's: Emp, ContractValue, Risk, Sales...)
 #mean is taken to account for # of contracts
 EVERYTHING %>%
-  filter(certYear <= 2012 && certYear >= 2008 | is.na(certYear)) %>%
 ggplot() +
   aes(x = Reg_Year, y = Emp, color = ethnicity) +
   stat_summary(fun.y = mean, geom = "line", size = 1) +
-  facet_wrap(~ certYear) +
-  geom_vline(aes(xintercept = certYear), linetype = "dashed") +
-  labs(title = "Employment before and after certification",
-       x = "Year", color = "Ethnicity", y = "Employment")
+  theme_bw() +
+  labs(title = "Employment Over Time",
+       x = "Year", color = "Ethnicity", y = "Number of Employees")
   
 #wealth vs ethnicity. plot 1 = by ethnicity, plot 2 = MWBE vs non-MWBE
 
