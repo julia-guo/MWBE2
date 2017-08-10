@@ -328,13 +328,17 @@ ggplot(EVERYTHING) +
 #cohort graphs (sub in different y's: Emp, ContractValue, Risk, Sales...)
 #mean is taken to account for # of contracts
 EVERYTHING %>%
+  filter(certYear == 2008 | is.na(certYear)) %>%
 ggplot() +
-  aes(x = Reg_Year, y = Emp, color = ethnicity) +
+  aes(x = Reg_Year, y = Risk, color = ethnicity) +
   stat_summary(fun.y = mean, geom = "line", size = 1) +
+  facet_wrap(~ MWBEStatus, scales = "free_y") +
+  geom_vline(aes(xintercept = certYear), linetype = "dashed") +
   theme_bw() +
-  labs(title = "Employment Over Time",
-       x = "Year", color = "Ethnicity", y = "Number of Employees")
-  
+  labs(title = "Risk Over Time (For Businesses Certified in 2008)",
+       x = "Year", color = "Ethnicity", y = "Average Risk (log 10 scale)", 
+       subtitle = "\"FALSE\" / \"NA\" = Non-MWBE")
+
 #wealth vs ethnicity. plot 1 = by ethnicity, plot 2 = MWBE vs non-MWBE
 
 ggplot(EVERYTHING) +
